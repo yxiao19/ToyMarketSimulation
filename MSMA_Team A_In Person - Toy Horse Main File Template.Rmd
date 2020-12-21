@@ -1,0 +1,156 @@
+---
+title: "Toy Horse Main File"
+author: "Team A, MSMA in-person"
+date: "12/07/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+require("cluster")
+require("fpc")
+require("factoextra")
+require("gridExtra")
+library(cluster)
+library(fpc)
+library(factoextra)
+library(gridExtra)
+library(data.table)
+```
+
+Load the data and any libraries as well as sourcing any .R software files. You should source your ConjointCode.R file
+
+```{r loadData}
+##Insert code to load the data here
+load("C:/Users/hbjzx/Desktop/SIMON/FALL B/Case/GBA424 Fall 2020 - Toy Horse Case Data.Rdata")
+load("C:/Users/hbjzx/Desktop/SIMON/FALL B/Case/R Software.RData")
+```
+
+
+\section{Part A: Regressions}
+Include here analysis that produces the part-utilities at the individual level. These will be data to pass to part B. In addition, use these estimates to do the predictions of the missing profiles and to create a complete set of profile ratings to be used in part D. 
+
+```{r individualLevelRegressions,error=TRUE}
+###Insert code here
+conjointData_NA <- subset(conjointData, is.na(conjointData$ratings)) #select rows with missing values in ratings
+conjointData_noNA <- conjointData[complete.cases(conjointData),] #select rows without missing values in ratings
+number_of_ID <- length(unique(conjointData_noNA$ID)) #calculate how many respondents
+coefs <- matrix(nrow=number_of_ID,ncol=5) #5 columns: intercept and 4 attributes
+for(i in 1:nrow(conjointData_noNA)){
+    coefs[i,]=lm(ratings~price+size+motion+style,data=conjointData_noNA[conjointData_noNA$ID==i,],na.action=na.exclude)$coef
+}
+colnames(coefs)<- c("intercept","price","size","motion","style")
+toClust <- coefs
+
+coefs_full <- matrix(rep(coefs,each=16),ncol=5) #create a matrix that can have all respondents' reponses of the 16 profiles including the predicted ones 
+colnames(coefs_full) <-c("intercept","price","size","motion","style")
+attribute <- conjointData[,4:7]
+ratings <- conjointData[,3]
+attribute_with_intercept <- cbind(rep(1,nrow(attribute)) ,attribute)
+colnames(attribute_with_intercept)<-c("intercept","price","size","motion","style")
+pratings <- rowSums(attribute_with_intercept*coefs_full) 
+ratings_full <- ifelse(is.na(ratings),pratings,ratings) #all profile ratings including the predicted ones
+
+ratings_full_df <-as.data.frame(ratings_full) #convert to a dataframe
+conjointData_new <- cbind(conjointData,ratings_full_df) #combine the conjoint data with the full ratings
+profile_rating <- conjointData_new[,c(1:2,8)] #select columns we need: ID and full ratings
+library(reshape2)
+profile_rating <- dcast(profile_rating,ID~profile) #change the way the data looks like to use it later to do ranking
+head(profile_rating,10)
+library(matrixStats)
+profile_ranking <-data.frame(profile_rating[,-1], t(apply(-profile_rating, 1, rank, ties.method='min'))) #rank each profile for each respondent based on ratings, highest rating is rank#1
+profile_ranking <- profile_ranking[,-1:-17] #select columns useful
+profile_ranking <- cbind(profile_rating$ID,profile_ranking)
+colnames(profile_ranking)<-c("ID",1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16)#dataset use for market simulator
+```
+
+\section{Part B: Post-hoc Segmentation}
+
+In this section, wse cluster analysis on the part-utilities (including the constant) to identify the best post-hoc segmentation scheme. Test at least two cluster analysis schemes (i.e., number of clusters) and select the best one in your view. Justify this decision. Then profile the segments in the chosen scheme and identify the ideal product for each segment. See if you can identify any other strategic issues arising from the segmentation (e.g., menu pricing opportunities, competitive considerations, target/customization).
+
+```{r postHocSegmentation}
+##Insert code here
+set.seed(1)
+tmp <- clustTest(toClust)
+clusts = runClusts(toClust,2:4) #try 2, 3, 4 clusters, 2,3 looks better
+plotClust(clusts$kms[[1]],toClust)
+plotClust(clusts$kms[[2]],toClust)
+```
+
+2 and 3 clusters are better than 4 because there are overlapping for 4. Based on the cluster graphs and the elbow rule graph, 3 clusters are appropriate. 
+
+Based on the bar chart of the 3 clusters. It is a 26%-40%-34% split. By looking at the average data for each segement, we can conclude that:
+1. Segment 1: Price sensitive, indifferent about size, prefers bouncing motion, prefers racing style;
+2. Segment 2: Price insensitive, pefers smaller size, prefers rocking motion, prefers racing style
+3. Segment 3: Price insensitive, prefers larger size, prefers rocking motion, prefers gamourous style
+
+\section{Part C: A Priori Segmentation}
+
+Conduct a priori segmentation analyses using the variables gender and age in order to profile the attribute preferences based on these variables (use segment-level regressions). Test whether these a priori segmentation variables affect the part-utilities. What does this test tell you about these as segmentation schemes? If the differences are meaningful, profile the segment-level attribute preferences and identify the ideal product for each of the relevant a priori segments. See if you can identify any other strategic issues arising from the segmentation (e.g., menu pricing opportunities, competitive considerations, target/customization).
+
+```{r aPrioriSegmentation}
+##Provide code here
+data <- merge(conjointData,respondentData,by="ID")
+summary(lm(ratings~(price+size+motion+style)*age,data=data))
+summary(lm(ratings~(price+size+motion+style)*gender,data=data))
+
+summary(lm(ratings~price+size+motion+style,data=data[data$age==1,])) #older
+summary(lm(ratings~price+size+motion+style,data=data[data$age==0,]))
+
+summary(lm(ratings~price+size+motion+style,data=data[data$gender==1,])) #female
+summary(lm(ratings~price+size+motion+style,data=data[data$gender==0,]))
+```
+The different age groups and genders groups have different preferences. After doing the analysis, we can conclude that:
+1. Younger children are less price sensitive, more indifferent about size, prefer rocking motion, and prefer glamour style more; older children are more price sensitive, prefer larger size, prefer bouncing motion, and prefer glamour style but not as much as the younger kids;
+2. Males are more price sensitive, prefer larger size, prefer bouncing motion, and prefer racing style; females are price sensitive, prefer larger size more, prefer rocking motion, and prefer glamour style.
+
+
+\section{Part D: Market Simulation}
+
+Use disaggregate analysis with a first choice rule to forecast market shares for a decision-relevant set of scenarios. Using these market shares and the information about costs in the case, calculate profitability for each product in the product line as well as the overall profitability for the firm and competition. You should present at least 4 scenarios that try to identify the best possible product line strategy (policy) given considerations related to competitive response, cannibalization, profitability, and long-run profitability. Be sure to briefly justify why you chose the scenarios you chose to analyze!
+
+
+```{r marketSimulation}
+scens = list()
+scens[[1]]=c(5,13,7)  #Status quo
+scens[[2]]=c(13,7)
+scens[[3]]=c(6,14,7)
+scens[[4]]=c(2,5,15,7)
+scens[[5]]=c(15,12,7)
+scens[[6]]=c(4,15,7)
+simFCShares(scens[[4]],profile_ranking[,2:17])
+s <-simScenarios(scens,profile_ranking[,2:17])
+s
+
+inputdata <- profile_ranking[,2:17]
+simProf1 = simProfit(inputdata,scens[[1]],c(1,2),c(111.99,111.99,111.99),c(33,33,41),40000,4000)
+simProf2 = simProfit(inputdata,scens[[2]],1,c(111.99,111.99),c(33,41),20000,4000)
+simProf3 = simProfit(inputdata,scens[[3]],c(1,2),c(95.99,95.99,111.99),c(33,33,41),40000+7000*2,4000)
+simProf4 = simProfit(inputdata,scens[[4]],c(1,2,3),c(95.99,111.99,111.99,111.99),c(21,33,41,41),60000+7000*2,4000)
+simProf5 = simProfit(inputdata,scens[[5]],c(1,2),c(111.99,95.99,111.99),c(41,29,41),40000+7000*2,4000)
+simProf6 = simProfit(inputdata,scens[[6]],c(1,2),c(95.99,111.99,111.99),c(29,41,41),40000+7000*2,4000)
+
+simProf1
+simProf2
+simProf3
+simProf4
+simProf5
+simProf6
+
+mktshr_comp <- s[,7]
+profit_comp <- mktshr_comp*4000*(111.99-41)-20000
+profit_comp
+```
+
+We tested 6 senarios here assuming our competitor will only carry profile 7:
+1.  Status quo: Profile #5, #13
+2. Eliminate worse product, keep best product: eliminate Profile #5, Keep Profile #13, because #5 have same price, motion, and style as competitors but has smaller size.
+3. Lower price for both products (undercut competitors)
+Profile #6 and Profile #14, because all people are price sensitive (even though some are less price sensitive), so reducing the price should increase our ratings and market share.
+4. Have three products targeting each benefit segments: eliminate profile #13, release 2 new products, keep 1 targeting 3 benefit segments;
+profile #2 (segment 1), profile #5 (segment 2), profile #15 (segment 3)
+5. Target based on Age segmentation:
+profile #15 (younger), profile #12 (older)
+6. Target based on gender segmentation: profile #4 (male), profile #15 (female).
+
+Senario 4 gives us the most market share which is 99.5%. It also gives the most profit which is 220300.2.
